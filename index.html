@@ -3,7 +3,6 @@
 <head>
     <meta charset="UTF-8">
     <title>Silver Mark 发货神器</title>
-    <script src="https://sf3-cn.feishucdn.net/obj/static/lark/base-extension-sdk/base-extension-sdk.js"></script>
     <script src="https://cdn.bootcdn.net/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
     <style>
         body { font-family: sans-serif; padding: 15px; background: #f4f7fe; }
@@ -15,69 +14,85 @@
 </head>
 <body>
     <div class="card">
-        <h3 style="margin:0 0 15px 0;">Silver Mark 发货神器</h3>
-        <button id="runBtn" disabled>正在初始化环境...</button>
-        <div id="status">⏳ 正在努力连接飞书应用...</div>
+        <h3 style="margin:0 0 15px 0;">Silver Mark 发货助手</h3>
+        <button id="runBtn" disabled>正在环境初始化...</button>
+        <div id="status">⏳ 正在尝试加载飞书核心组件...</div>
     </div>
 
     <script>
-        // 您的云途参数配置
-        const YUN_CONF = {
+        // 账号配置
+        const CONF = {
             id: '38f5678511a9', secret: 'ab12d80d7e294cc9b75ec12af289a600',
             source: 'CN0824176', proxy: 'https://corsproxy.io/?' 
         };
 
-        const runBtn = document.getElementById('runBtn');
-        const status = document.getElementById('status');
+        // --- 核心：多镜像 SDK 加载逻辑，解决 ERR_NAME_NOT_RESOLVED ---
+        const sdkUrls = [
+            "https://lf1-cdn-tos.bytegoofy.com/obj/static/base-extension-sdk/base-extension-sdk.js",
+            "https://lf3-static.bytednsdoc.com/obj/eden-cn/ptlz_zlp/ljhwZthlaukjlkulzlp/base-extension-sdk.js",
+            "https://sf3-cn.feishucdn.net/obj/static/lark/base-extension-sdk/base-extension-sdk.js"
+        ];
 
-        // 每 500ms 探测一次 bitable 环境，直到变蓝
-        const timer = setInterval(() => {
-            if (window.bitable) {
-                clearInterval(timer);
-                runBtn.disabled = false;
-                runBtn.innerText = "🚀 一键下单选中行";
-                status.innerText = "✅ 飞书应用已连接！\n请选中一行订单数据后点击。";
+        function loadSDK(index) {
+            if (index >= sdkUrls.length) {
+                document.getElementById('status').innerText = "❌ 无法连接到飞书服务器，请检查网络或关闭代理。";
+                return;
             }
-        }, 500);
+            const script = document.createElement('script');
+            script.src = sdkUrls[index];
+            script.onload = () => {
+                const checkTimer = setInterval(() => {
+                    if (window.bitable) {
+                        clearInterval(checkTimer);
+                        initUI();
+                    }
+                }, 500);
+            };
+            script.onerror = () => loadSDK(index + 1);
+            document.head.appendChild(script);
+        }
+        loadSDK(0);
 
-        runBtn.onclick = async () => {
-            runBtn.disabled = true;
-            status.innerText = "🔍 正在抓取地址数据...";
+        function initUI() {
+            const btn = document.getElementById('runBtn');
+            btn.disabled = false;
+            btn.innerText = "🚀 一键下单选中行";
+            document.getElementById('status').innerText = "✅ 已连接到飞书应用！\n请选中订单行后点击。";
+        }
+
+        document.getElementById('runBtn').onclick = async () => {
+            const status = document.getElementById('status');
+            status.innerText = "🔍 抓取订单数据...";
             try {
-                // 1. 获取选中行记录
                 const selection = await bitable.base.getSelection();
-                if (!selection.recordId) throw new Error("请先点击选中一行订单！");
-                
+                if (!selection.recordId) throw new Error("请先点一下表格，选中一行！");
                 const table = await bitable.base.getTableById(selection.tableId);
                 const record = await table.getRecordById(selection.recordId);
                 const f = record.fields;
 
-                // 2. 获取云途 Token
-                status.innerText = "🔑 正在请求云途授权...";
-                const tRes = await fetch(YUN_CONF.proxy + encodeURIComponent('https://openapi.yunexpress.cn/openapi/oauth2/token'), {
+                const tRes = await fetch(CONF.proxy + encodeURIComponent('https://openapi.yunexpress.cn/openapi/oauth2/token'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ "grantType": "client_credentials", "appId": YUN_CONF.id, "appSecret": YUN_CONF.secret, "sourceKey": YUN_CONF.source })
+                    body: JSON.stringify({ "grantType": "client_credentials", "appId": CONF.id, "appSecret": CONF.secret, "sourceKey": CONF.source })
                 });
                 const tData = await tRes.json();
 
-                // 3. 构建下单信息
                 const timestamp = new Date().getTime().toString();
-                const bodyStr = JSON.stringify({
-                    "product_code": "THPHR", 
-                    "customer_order_number": f['Etsy订单号'] || ("SN" + timestamp),
+                const body = {
+                    "product_code": "THPHR",
+                    "customer_order_number": f['Etsy订单号'] || ("SN"+timestamp),
                     "receiver": {
                         "country_code": "US", "first_name": f['收件人姓名'] || f['收件人'] || "Guest",
                         "address_lines": [f['收货地址'] || ""], "city": f['城市'] || "",
                         "state_or_province": f['省/州'] || "", "zip_code": f['邮编'] || "", "phone_number": f['电话'] || ""
                     }
-                });
+                };
 
-                // 4. 加密下单
-                const sign = CryptoJS.HmacSHA256(`body=${bodyStr}&date=${timestamp}&method=POST&uri=/v1/order/package/create`, YUN_CONF.secret).toString(CryptoJS.enc.Base64);
+                const bodyStr = JSON.stringify(body);
+                const sign = CryptoJS.HmacSHA256(`body=${bodyStr}&date=${timestamp}&method=POST&uri=/v1/order/package/create`, CONF.secret).toString(CryptoJS.enc.Base64);
                 
-                status.innerText = "📦 正在向云途仓库提交订单...";
-                const oRes = await fetch(YUN_CONF.proxy + encodeURIComponent('https://openapi.yunexpress.cn/v1/order/package/create'), {
+                status.innerText = "📦 正在极速发货...";
+                const oRes = await fetch(CONF.proxy + encodeURIComponent('https://openapi.yunexpress.cn/v1/order/package/create'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'token': tData.accessToken, 'date': timestamp, 'sign': sign },
                     body: bodyStr
@@ -85,16 +100,13 @@
                 const oData = await oRes.json();
 
                 if (oData.success) {
-                    status.innerText = "🎉 发货成功！单号：" + oData.result.waybill_number;
-                    // 写回运单号
+                    status.innerText = "🎉 成功！单号：" + oData.result.waybill_number;
                     await table.setRecord(selection.recordId, { fields: { '运单号': oData.result.waybill_number } });
                 } else {
-                    status.innerText = "⚠️ 下单失败：" + oData.msg;
+                    status.innerText = "⚠️ 业务报错：" + oData.msg;
                 }
             } catch (e) {
-                status.innerText = "❌ 运行报错：" + e.message;
-            } finally {
-                runBtn.disabled = false;
+                status.innerText = "❌ 报错：" + e.message;
             }
         };
     </script>
