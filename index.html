@@ -3,25 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <title>Silver Mark Artisan 发货助手</title>
-    <script src="https://sf3-cn.feishucdn.net/obj/static/lark/base-extension-sdk/base-extension-sdk.js"></script>
+    <script src="https://lf3-static.bytednsdoc.com/obj/eden-cn/ptlz_zlp/ljhwZthlaukjlkulzlp/base-extension-sdk.js"></script>
     <script src="https://cdn.bootcdn.net/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
     <style>
-        body { font-family: sans-serif; padding: 15px; background: #f9f9f9; }
-        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-        button { width: 100%; background: #3370ff; color: white; border: none; padding: 12px; border-radius: 4px; cursor: pointer; font-weight: bold; }
-        button:disabled { background: #ccc; cursor: not-allowed; }
-        #status { margin-top: 15px; font-size: 13px; color: #666; line-height: 1.5; white-space: pre-wrap; }
+        body { font-family: sans-serif; padding: 15px; background: #f4f7fe; }
+        .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+        button { width: 100%; background: #3370ff; color: white; border: none; padding: 14px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 14px; transition: 0.3s; }
+        button:disabled { background: #cbd5e0; cursor: not-allowed; }
+        #status { margin-top: 15px; font-size: 13px; color: #4a5568; line-height: 1.6; white-space: pre-wrap; background: #edf2f7; padding: 10px; border-radius: 4px; }
     </style>
 </head>
 <body>
     <div class="card">
-        <h4>Silver Mark Artisan 发货助手</h4>
-        <button id="runBtn" disabled>正在初始化环境...</button>
-        <div id="status">💡 初始化完成后按钮将变亮。</div>
+        <h3 style="margin-top:0; color:#1a202c;">Silver Mark 发货助手</h3>
+        <button id="runBtn" disabled>正在同步飞书环境...</button>
+        <div id="status">⏳ 正在等待飞书 SDK 初始化...</div>
     </div>
 
     <script>
-        // 账号配置
+        // 您的真实账号参数
         const CONF = {
             id: '38f5678511a9',
             secret: 'ab12d80d7e294cc9b75ec12af289a600',
@@ -32,66 +32,78 @@
         const runBtn = document.getElementById('runBtn');
         const status = document.getElementById('status');
 
-        // --- 核心修复：确保 bitable SDK 加载完成 ---
-        function checkBitable() {
-            if (typeof bitable !== 'undefined') {
+        // --- 核心修复：死循环检查 bitable 是否加载成功 ---
+        const timer = setInterval(() => {
+            if (window.bitable) {
+                clearInterval(timer);
                 runBtn.disabled = false;
-                runBtn.innerText = "一键发货选中行";
-                status.innerText = "✅ 环境就绪，请选中一行订单后点击。";
-                console.log("SDK Ready!");
-            } else {
-                setTimeout(checkBitable, 500); // 每半秒检查一次，直到成功
+                runBtn.innerText = "🚀 一键下单选中行";
+                status.innerText = "✅ 环境已就绪\n请先在左侧表格选中一行订单。";
             }
-        }
-        checkBitable();
+        }, 300);
 
         runBtn.onclick = async () => {
-            status.innerText = "⏳ 正在处理中...";
+            runBtn.disabled = true;
+            status.innerText = "🔍 正在读取订单数据...";
+            
             try {
-                // 1. 获取选中数据
+                // 1. 获取选中行数据
                 const selection = await bitable.base.getSelection();
-                if (!selection.recordId) {
-                    status.innerText = "⚠️ 请先在左侧表格里选中一行订单！";
-                    return;
-                }
+                if (!selection.recordId) throw new Error("请先在表格中点击选中一行记录！");
+                
                 const table = await bitable.base.getTableById(selection.tableId);
                 const record = await table.getRecordById(selection.recordId);
-                const fields = record.fields;
+                const f = record.fields;
 
-                // 2. 获取 Token (带代理)
+                // 2. 获取 Token
+                status.innerText = "🔑 正在获取云途授权...";
                 const tRes = await fetch(CONF.proxy + encodeURIComponent('https://openapi.yunexpress.cn/openapi/oauth2/token'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ "grantType": "client_credentials", "appId": CONF.id, "appSecret": CONF.secret, "sourceKey": CONF.source })
                 });
                 const tData = await tRes.json();
-                const token = tData.accessToken;
+                if (!tData.accessToken) throw new Error("Token获取失败: " + JSON.stringify(tData));
 
-                // 3. 计算签名下单
+                // 3. 构建订单 (完全对应 image_d846a2 的列名)
                 const timestamp = new Date().getTime().toString();
-                const bodyStr = JSON.stringify({
-                    "product_code": "THPHR",
-                    "customer_order_number": fields['Etsy订单号'] || ("SN" + timestamp),
-                    "receiver": { "country_code": "US", "first_name": fields['收件人'] || "Guest", "phone_number": fields['电话'] || "" }
-                });
+                const orderBody = {
+                    "product_code": "THPHR", 
+                    "customer_order_number": f['Etsy订单号'] || ("SN" + timestamp),
+                    "receiver": {
+                        "country_code": "US",
+                        "first_name": f['收件人'] || "Guest",
+                        "address_lines": [f['收货地址'] || ""],
+                        "city": f['城市'] || "",
+                        "state_or_province": f['省/州'] || "",
+                        "zip_code": f['邮编'] || "",
+                        "phone_number": f['电话'] || ""
+                    }
+                };
+
+                // 4. 签名并下单
+                const bodyStr = JSON.stringify(orderBody);
                 const sign = CryptoJS.HmacSHA256(`body=${bodyStr}&date=${timestamp}&method=POST&uri=/v1/order/package/create`, CONF.secret).toString(CryptoJS.enc.Base64);
 
+                status.innerText = "📦 正在向云途提交订单...";
                 const oRes = await fetch(CONF.proxy + encodeURIComponent('https://openapi.yunexpress.cn/v1/order/package/create'), {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'token': token, 'date': timestamp, 'sign': sign },
+                    headers: { 'Content-Type': 'application/json', 'token': tData.accessToken, 'date': timestamp, 'sign': sign },
                     body: bodyStr
                 });
                 const oData = await oRes.json();
 
                 if (oData.success) {
-                    status.innerText = "🎉 下单成功！\n单号：" + oData.result.waybill_number;
-                    // 写回表格
+                    status.innerText = "🎉 下单成功！\n运单号：" + oData.result.waybill_number;
+                    // 回写单号
                     await table.setRecord(selection.recordId, { fields: { '运单号': oData.result.waybill_number } });
                 } else {
-                    status.innerText = "❌ 云途拒绝：" + oData.msg;
+                    status.innerText = "⚠️ 下单失败：" + oData.msg;
                 }
             } catch (e) {
-                status.innerText = "❌ 运行错误：" + e.message;
+                status.innerText = "❌ 报错：" + e.message;
+            } finally {
+                runBtn.disabled = false;
             }
         };
     </script>
