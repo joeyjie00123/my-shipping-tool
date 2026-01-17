@@ -2,39 +2,51 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <script src="https://lf1-cdn-tos.bytegoofy.com/obj/static/base-extension-sdk/base-extension-sdk.js"></script>
+    <title>Silver Mark Artisan 发货助手</title>
+    <script src="https://sf3-cn.feishucdn.net/obj/static/lark/base-extension-sdk/base-extension-sdk.js"></script>
     <script src="https://cdn.bootcdn.net/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
     <style>
         body { font-family: sans-serif; padding: 15px; background: #f9f9f9; }
         .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-        h4 { margin-top: 0; color: #333; }
         button { width: 100%; background: #3370ff; color: white; border: none; padding: 12px; border-radius: 4px; cursor: pointer; font-weight: bold; }
-        button:hover { background: #2859cc; }
-        #status { margin-top: 15px; font-size: 13px; color: #666; line-height: 1.6; white-space: pre-wrap; }
+        #status { margin-top: 15px; font-size: 13px; color: #666; white-space: pre-wrap; }
     </style>
 </head>
 <body>
     <div class="card">
         <h4>Silver Mark Artisan 发货助手</h4>
         <button id="runBtn">一键发货选中行</button>
-        <div id="status">💡 请先在表格中选中一行订单，然后点击上方按钮。</div>
+        <div id="status">💡 请确保您已在表格中选中一行。</div>
     </div>
 
     <script>
+        // 您的真实账号配置
         const CONF = {
-            id: '38f5678511a9', //
-            secret: 'ab12d80d7e294cc9b75ec12af289a600', //
-            source: 'CN0824176', //
-            proxy: 'https://corsproxy.io/?' // 解决浏览器拦截
+            id: '38f5678511a9',
+            secret: 'ab12d80d7e294cc9b75ec12af289a600',
+            source: 'CN0824176',
+            proxy: 'https://corsproxy.io/?' 
         };
 
-        document.getElementById('runBtn').onclick = async () => {
-            const status = document.getElementById('status');
+        const runBtn = document.getElementById('runBtn');
+        const status = document.getElementById('status');
+
+        // 核心修复逻辑：等待 bitable 环境就绪
+        runBtn.onclick = async () => {
+            // 检查 SDK 是否加载成功
+            if (typeof bitable === 'undefined') {
+                status.innerText = "❌ SDK 未加载，请尝试刷新页面。";
+                return;
+            }
+
             status.innerText = "⏳ 正在读取表格数据...";
-            
             try {
                 // 1. 获取选中行数据
                 const selection = await bitable.base.getSelection();
+                if (!selection.recordId) {
+                    status.innerText = "⚠️ 请先在左侧表格里点击选中一行订单！";
+                    return;
+                }
                 const table = await bitable.base.getTableById(selection.tableId);
                 const record = await table.getRecordById(selection.recordId);
                 const fields = record.fields;
@@ -49,19 +61,23 @@
                 const tData = await tRes.json();
                 const token = tData.accessToken;
 
-                // 3. 准备下单数据
+                // 3. 准备数据 (字段名对应 image_d6dae4.png)
                 const timestamp = new Date().getTime().toString();
                 const orderBody = {
-                    "product_code": "THPHR", // 如果线路不对请修改这里
+                    "product_code": "THPHR", 
                     "customer_order_number": fields['Etsy订单号'] || ("AUTO" + timestamp),
-                    "receiver": { "country_code": "US", "first_name": fields['收件人'] || "Guest", "phone_number": fields['电话'] || "" }
+                    "receiver": { 
+                        "country_code": "US", 
+                        "first_name": fields['收件人'] || "Guest", 
+                        "phone_number": fields['电话'] || "12345678" 
+                    }
                 };
 
                 // 4. 加密签名并下单
                 const bodyStr = JSON.stringify(orderBody);
                 const sign = CryptoJS.HmacSHA256(`body=${bodyStr}&date=${timestamp}&method=POST&uri=/v1/order/package/create`, CONF.secret).toString(CryptoJS.enc.Base64);
 
-                status.innerText = "📦 正在向云途提交订单...";
+                status.innerText = "📦 正在极速下单...";
                 const oRes = await fetch(CONF.proxy + encodeURIComponent('https://openapi.yunexpress.cn/v1/order/package/create'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'token': token, 'date': timestamp, 'sign': sign },
@@ -71,13 +87,13 @@
 
                 if (oData.success) {
                     status.innerText = "✅ 下单成功！\n运单号：" + oData.result.waybill_number;
-                    // 写回表格
+                    // 自动将单号写回表格
                     await table.setRecord(selection.recordId, { fields: { '运单号': oData.result.waybill_number } });
                 } else {
-                    status.innerText = "⚠️ 云途返回错误：\n" + oData.msg;
+                    status.innerText = "⚠️ 下单失败：" + oData.msg;
                 }
             } catch (e) {
-                status.innerText = "❌ 程序报错：\n" + e.message;
+                status.innerText = "❌ 发生错误：" + e.message;
             }
         };
     </script>
