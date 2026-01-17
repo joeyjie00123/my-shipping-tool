@@ -9,18 +9,19 @@
         body { font-family: sans-serif; padding: 15px; background: #f9f9f9; }
         .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
         button { width: 100%; background: #3370ff; color: white; border: none; padding: 12px; border-radius: 4px; cursor: pointer; font-weight: bold; }
-        #status { margin-top: 15px; font-size: 13px; color: #666; white-space: pre-wrap; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        #status { margin-top: 15px; font-size: 13px; color: #666; line-height: 1.5; white-space: pre-wrap; }
     </style>
 </head>
 <body>
     <div class="card">
         <h4>Silver Mark Artisan 发货助手</h4>
-        <button id="runBtn">一键发货选中行</button>
-        <div id="status">💡 请确保您已在表格中选中一行。</div>
+        <button id="runBtn" disabled>正在初始化环境...</button>
+        <div id="status">💡 初始化完成后按钮将变亮。</div>
     </div>
 
     <script>
-        // 您的真实账号配置
+        // 账号配置
         const CONF = {
             id: '38f5678511a9',
             secret: 'ab12d80d7e294cc9b75ec12af289a600',
@@ -31,28 +32,33 @@
         const runBtn = document.getElementById('runBtn');
         const status = document.getElementById('status');
 
-        // 核心修复逻辑：等待 bitable 环境就绪
-        runBtn.onclick = async () => {
-            // 检查 SDK 是否加载成功
-            if (typeof bitable === 'undefined') {
-                status.innerText = "❌ SDK 未加载，请尝试刷新页面。";
-                return;
+        // --- 核心修复：确保 bitable SDK 加载完成 ---
+        function checkBitable() {
+            if (typeof bitable !== 'undefined') {
+                runBtn.disabled = false;
+                runBtn.innerText = "一键发货选中行";
+                status.innerText = "✅ 环境就绪，请选中一行订单后点击。";
+                console.log("SDK Ready!");
+            } else {
+                setTimeout(checkBitable, 500); // 每半秒检查一次，直到成功
             }
+        }
+        checkBitable();
 
-            status.innerText = "⏳ 正在读取表格数据...";
+        runBtn.onclick = async () => {
+            status.innerText = "⏳ 正在处理中...";
             try {
-                // 1. 获取选中行数据
+                // 1. 获取选中数据
                 const selection = await bitable.base.getSelection();
                 if (!selection.recordId) {
-                    status.innerText = "⚠️ 请先在左侧表格里点击选中一行订单！";
+                    status.innerText = "⚠️ 请先在左侧表格里选中一行订单！";
                     return;
                 }
                 const table = await bitable.base.getTableById(selection.tableId);
                 const record = await table.getRecordById(selection.recordId);
                 const fields = record.fields;
 
-                // 2. 获取 Token
-                status.innerText = "🚀 正在连接云途授权...";
+                // 2. 获取 Token (带代理)
                 const tRes = await fetch(CONF.proxy + encodeURIComponent('https://openapi.yunexpress.cn/openapi/oauth2/token'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -61,23 +67,15 @@
                 const tData = await tRes.json();
                 const token = tData.accessToken;
 
-                // 3. 准备数据 (字段名对应 image_d6dae4.png)
+                // 3. 计算签名下单
                 const timestamp = new Date().getTime().toString();
-                const orderBody = {
-                    "product_code": "THPHR", 
-                    "customer_order_number": fields['Etsy订单号'] || ("AUTO" + timestamp),
-                    "receiver": { 
-                        "country_code": "US", 
-                        "first_name": fields['收件人'] || "Guest", 
-                        "phone_number": fields['电话'] || "12345678" 
-                    }
-                };
-
-                // 4. 加密签名并下单
-                const bodyStr = JSON.stringify(orderBody);
+                const bodyStr = JSON.stringify({
+                    "product_code": "THPHR",
+                    "customer_order_number": fields['Etsy订单号'] || ("SN" + timestamp),
+                    "receiver": { "country_code": "US", "first_name": fields['收件人'] || "Guest", "phone_number": fields['电话'] || "" }
+                });
                 const sign = CryptoJS.HmacSHA256(`body=${bodyStr}&date=${timestamp}&method=POST&uri=/v1/order/package/create`, CONF.secret).toString(CryptoJS.enc.Base64);
 
-                status.innerText = "📦 正在极速下单...";
                 const oRes = await fetch(CONF.proxy + encodeURIComponent('https://openapi.yunexpress.cn/v1/order/package/create'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'token': token, 'date': timestamp, 'sign': sign },
@@ -86,14 +84,14 @@
                 const oData = await oRes.json();
 
                 if (oData.success) {
-                    status.innerText = "✅ 下单成功！\n运单号：" + oData.result.waybill_number;
-                    // 自动将单号写回表格
+                    status.innerText = "🎉 下单成功！\n单号：" + oData.result.waybill_number;
+                    // 写回表格
                     await table.setRecord(selection.recordId, { fields: { '运单号': oData.result.waybill_number } });
                 } else {
-                    status.innerText = "⚠️ 下单失败：" + oData.msg;
+                    status.innerText = "❌ 云途拒绝：" + oData.msg;
                 }
             } catch (e) {
-                status.innerText = "❌ 发生错误：" + e.message;
+                status.innerText = "❌ 运行错误：" + e.message;
             }
         };
     </script>
